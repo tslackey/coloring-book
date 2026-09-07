@@ -24,6 +24,7 @@ pub struct PageRecord {
     pub source_url: Option<String>,
     pub original_png: Vec<u8>,
     pub output_png: Option<Vec<u8>>,
+    #[allow(dead_code)]
     pub threshold: f64,
 }
 

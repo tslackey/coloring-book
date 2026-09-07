@@ -10,7 +10,7 @@ import type {
 import { pngUrl, slugify } from "./types";
 import "./App.css";
 
-const DEFAULT_THRESHOLD = 15;
+const DEFAULT_THRESHOLD = 50;
 
 function App() {
   const [workspace, setWorkspace] = useState<WorkspaceView | null>(null);
@@ -43,10 +43,12 @@ function App() {
     });
   }, [refreshLibrary]);
 
-  const applyWorkspace = useCallback((view: WorkspaceView) => {
+  const applyWorkspace = useCallback((view: WorkspaceView, resetDetail = true) => {
     setWorkspace(view);
     setColoringUrl(pngUrl(view.coloring_png_base64));
-    setThreshold(Math.round(view.threshold));
+    if (resetDetail) {
+      setThreshold(DEFAULT_THRESHOLD);
+    }
     setError(null);
   }, []);
 
@@ -120,7 +122,7 @@ function App() {
   const savePage = useCallback(async () => {
     await run("Saving to library…", async () => {
       const view = await invoke<WorkspaceView>("save_page", { threshold });
-      applyWorkspace(view);
+      applyWorkspace(view, false);
       await refreshLibrary();
     });
   }, [applyWorkspace, refreshLibrary, run, threshold]);
@@ -274,7 +276,7 @@ function App() {
             {coloringUrl ? (
               <img src={coloringUrl} alt={`${workspace?.title ?? "Page"} line art`} />
             ) : (
-              <p className="empty">Line art appears here. Scrub the threshold after loading an image.</p>
+              <p className="empty">Line art appears here after you load an image.</p>
             )}
           </div>
         </section>
@@ -296,9 +298,7 @@ function App() {
                     <img src={pngUrl(page.thumb_png_base64)} alt="" />
                     <span>
                       <strong>{page.title}</strong>
-                      <small>
-                        {page.source} · {Math.round(page.threshold)}%
-                      </small>
+                      <small>{page.source}</small>
                     </span>
                   </button>
                   <button
@@ -318,20 +318,6 @@ function App() {
       </div>
 
       <footer className="controls">
-        <label className="slider">
-          <span>
-            Threshold <strong>{threshold}%</strong>
-          </span>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={1}
-            value={threshold}
-            disabled={!hasImage || !!busy}
-            onChange={(event) => setThreshold(Number(event.currentTarget.value))}
-          />
-        </label>
         <div className="controls-actions">
           <button type="button" onClick={() => void savePage()} disabled={!hasImage || !!busy}>
             Save to library
@@ -340,6 +326,26 @@ function App() {
             Export PNG
           </button>
         </div>
+        <details className="advanced">
+          <summary>Advanced</summary>
+          <label className="slider">
+            <span>
+              Detail <strong>{threshold}%</strong>
+            </span>
+            <small>
+              Typical art should look right at 50%. Lower this only if a photo or painting draws too many lines.
+            </small>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={threshold}
+              disabled={!hasImage || !!busy}
+              onChange={(event) => setThreshold(Number(event.currentTarget.value))}
+            />
+          </label>
+        </details>
       </footer>
     </div>
   );

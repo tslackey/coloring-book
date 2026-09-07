@@ -293,12 +293,33 @@ h2 {
   gap: 1rem;
   padding: 0.8rem 1rem;
   border-radius: 18px;
+  flex-wrap: wrap;
+}
+
+.advanced {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.advanced summary {
+  cursor: pointer;
+  width: max-content;
+}
+
+.advanced .slider {
+  margin-top: 0.65rem;
 }
 
 .slider {
   flex: 1;
   display: grid;
   gap: 0.35rem;
+}
+
+.slider small {
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
 .slider input {

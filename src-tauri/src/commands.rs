@@ -107,7 +107,7 @@ pub fn import_file(
         None,
         rgb,
         original_png,
-        15.0,
+        process::DEFAULT_THRESHOLD,
     )
 }
 
@@ -133,7 +133,7 @@ pub fn import_clipboard(
         None,
         rgb,
         original_png,
-        15.0,
+        process::DEFAULT_THRESHOLD,
     )
 }
 
@@ -159,7 +159,7 @@ pub async fn import_url(
         None,
         rgb,
         original_png,
-        15.0,
+        process::DEFAULT_THRESHOLD,
     )
 }
 
@@ -256,7 +256,7 @@ pub fn load_page(id: i64, state: State<AppState>) -> Result<WorkspaceView, Strin
         Some(page.id),
         rgb,
         original_png,
-        page.threshold as f32,
+        process::DEFAULT_THRESHOLD,
     )
 }
 
@@ -285,7 +285,7 @@ pub fn export_page(id: i64, path: String, state: State<AppState>) -> Result<(), 
         _ => {
             let (rgb, _) = process::png_from_format_bytes(&page.original_png)?;
             let edges = process::prepare_edges(&rgb);
-            let coloring = process::apply_threshold(&edges, page.threshold as f32);
+            let coloring = process::apply_threshold(&edges, process::DEFAULT_THRESHOLD);
             process::encode_png_gray(&coloring)?
         }
     };
