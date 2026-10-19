@@ -10,6 +10,7 @@ import type {
   WorkspaceView,
 } from "./types";
 import { pngUrl, slugify } from "./types";
+import GuessWho from "./guess-who/GuessWho";
 import { printColoringPng, resolvePokemonQuery, suggestPokemon } from "./pokemon";
 import "./App.css";
 
@@ -30,6 +31,7 @@ function App() {
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [screen, setScreen] = useState<"coloring" | "guess">("coloring");
   const previewTimer = useRef<number | null>(null);
   const searchWrap = useRef<HTMLDivElement | null>(null);
   const hasImage = workspace !== null;
@@ -267,6 +269,9 @@ function App() {
   }, [mode, tutorial.length]);
 
   useEffect(() => {
+    if (screen !== "coloring") {
+      return;
+    }
     const onPaste = (event: ClipboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
@@ -277,7 +282,7 @@ function App() {
     };
     window.addEventListener("paste", onPaste);
     return () => window.removeEventListener("paste", onPaste);
-  }, [pasteClipboard]);
+  }, [pasteClipboard, screen]);
 
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
@@ -290,22 +295,46 @@ function App() {
   }, []);
 
   return (
-    <div className="studio">
+    <div className={`studio${screen === "guess" ? " guess-mode" : ""}`}>
       <header className="masthead">
         <div>
           <p className="eyebrow">Local studio</p>
           <h1>Coloring Book</h1>
         </div>
         <div className="masthead-actions">
-          <button type="button" onClick={() => void openFile()} disabled={!!busy}>
-            Open file
-          </button>
-          <button type="button" onClick={() => void pasteClipboard()} disabled={!!busy}>
-            Paste
-          </button>
+          <div className="mode-toggle" role="group" aria-label="Studio">
+            <button
+              type="button"
+              className={screen === "coloring" ? "active" : ""}
+              onClick={() => setScreen("coloring")}
+            >
+              Coloring
+            </button>
+            <button
+              type="button"
+              className={screen === "guess" ? "active" : ""}
+              onClick={() => setScreen("guess")}
+            >
+              Guess Who
+            </button>
+          </div>
+          {screen === "coloring" && (
+            <>
+              <button type="button" onClick={() => void openFile()} disabled={!!busy}>
+                Open file
+              </button>
+              <button type="button" onClick={() => void pasteClipboard()} disabled={!!busy}>
+                Paste
+              </button>
+            </>
+          )}
         </div>
       </header>
 
+      {screen === "guess" ? (
+        <GuessWho />
+      ) : (
+      <>
       <section className="search-bar">
         <form
           onSubmit={(event) => {
@@ -542,6 +571,8 @@ function App() {
           </label>
         </details>
       </footer>
+      </>
+      )}
     </div>
   );
 }

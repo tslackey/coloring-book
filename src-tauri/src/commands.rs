@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use futures::future::join_all;
 use image::GrayImage;
 use rusqlite::Connection;
 use serde::Serialize;
@@ -370,6 +371,128 @@ pub fn export_tutorial(path: String, threshold: f32, state: State<AppState>) -> 
     let sheet = process::tutorial_sheet(&steps);
     let png = process::encode_png_rgb(&sheet)?;
     write_png(&path, &png)
+}
+
+#[derive(Serialize)]
+pub struct ArtView {
+    pub name: String,
+    pub png_base64: Option<String>,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub fn list_rosters(state: State<AppState>) -> Result<Vec<db::RosterRow>, String> {
+    let db = state.db.lock().map_err(|_| "Database lock was poisoned")?;
+    db::list_rosters(&db)
+}
+
+#[tauri::command]
+pub fn save_roster(
+    id: Option<i64>,
+    name: String,
+    definition: String,
+    state: State<AppState>,
+) -> Result<i64, String> {
+    let db = state.db.lock().map_err(|_| "Database lock was poisoned")?;
+    db::save_roster(&db, id, &name, &definition)
+}
+
+#[tauri::command]
+pub fn delete_roster(id: i64, state: State<AppState>) -> Result<(), String> {
+    let db = state.db.lock().map_err(|_| "Database lock was poisoned")?;
+    db::delete_roster(&db, id)
+}
+
+#[tauri::command]
+pub async fn cache_roster_art(
+    names: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<ArtView>, String> {
+    let mut ordered: Vec<String> = Vec::new();
+    for name in names {
+        let trimmed = name.trim();
+        if !trimmed.is_empty() && !ordered.iter().any(|existing| existing == trimmed) {
+            ordered.push(trimmed.to_string());
+        }
+    }
+
+    let cached = {
+        let db = state.db.lock().map_err(|_| "Database lock was poisoned")?;
+        db::get_sprites(&db, &ordered)?
+    };
+
+    let client = state.http.clone();
+    let mut pending = Vec::new();
+    let mut views: Vec<ArtView> = Vec::with_capacity(ordered.len());
+    for name in &ordered {
+        if cached.contains_key(name) {
+            continue;
+        }
+        pending.push(name.clone());
+    }
+
+    let mut fetched: Vec<(String, Result<(Vec<u8>, String), String>)> = Vec::new();
+    for chunk in pending.chunks(4) {
+        let batch = chunk.iter().map(|name| {
+            let client = client.clone();
+            let name = name.clone();
+            async move {
+                let result = bulbapedia::pokemon_artwork(&client, &name).await;
+                (name, result)
+            }
+        });
+        fetched.extend(join_all(batch).await);
+    }
+
+    let mut stored = cached;
+    {
+        let db = state.db.lock().map_err(|_| "Database lock was poisoned")?;
+        for (name, result) in fetched {
+            match result {
+                Ok((bytes, url)) => match process::card_sprite_png(&bytes, 360) {
+                    Ok(png) => {
+                        db::put_sprite(&db, &name, &png, &url)?;
+                        stored.insert(name, png);
+                    }
+                    Err(error) => {
+                        views.push(ArtView {
+                            name,
+                            png_base64: None,
+                            error: Some(error),
+                        });
+                    }
+                },
+                Err(error) => {
+                    views.push(ArtView {
+                        name,
+                        png_base64: None,
+                        error: Some(error),
+                    });
+                }
+            }
+        }
+    }
+
+    let mut by_name: Vec<ArtView> = Vec::with_capacity(ordered.len());
+    for name in ordered {
+        if let Some(existing) = views.iter().position(|view| view.name == name) {
+            by_name.push(views.swap_remove(existing));
+            continue;
+        }
+        match stored.remove(&name) {
+            Some(png) => by_name.push(ArtView {
+                name,
+                png_base64: Some(process::to_base64(&png)),
+                error: None,
+            }),
+            None => by_name.push(ArtView {
+                name,
+                png_base64: None,
+                error: Some("Artwork was not cached".into()),
+            }),
+        }
+    }
+    Ok(by_name)
 }
 
 fn write_png(path: &str, png: &[u8]) -> Result<(), String> {

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -43,6 +44,19 @@ pub fn open(path: &Path) -> Result<Connection, String> {
             threshold REAL NOT NULL DEFAULT 15,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS rosters (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            definition TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS sprites (
+            name TEXT PRIMARY KEY,
+            png BLOB NOT NULL,
+            source_url TEXT,
+            fetched_at TEXT NOT NULL
         );
         ",
     )
@@ -184,6 +198,117 @@ pub fn list_pages(conn: &Connection) -> Result<Vec<(PageSummary, Vec<u8>)>, Stri
     Ok(pages)
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RosterRow {
+    pub id: i64,
+    pub name: String,
+    pub definition: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+pub fn list_rosters(conn: &Connection) -> Result<Vec<RosterRow>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, definition, created_at, updated_at
+             FROM rosters ORDER BY datetime(updated_at) DESC, id DESC",
+        )
+        .map_err(|e| format!("Could not list rosters: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(RosterRow {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                definition: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        })
+        .map_err(|e| format!("Could not list rosters: {e}"))?;
+    let mut rosters = Vec::new();
+    for row in rows {
+        rosters.push(row.map_err(|e| format!("Could not list rosters: {e}"))?);
+    }
+    Ok(rosters)
+}
+
+pub fn save_roster(
+    conn: &Connection,
+    id: Option<i64>,
+    name: &str,
+    definition: &str,
+) -> Result<i64, String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("Name the roster before saving".into());
+    }
+    serde_json::from_str::<serde_json::Value>(definition)
+        .map_err(|_| "Roster definition was not valid JSON".to_string())?;
+    let ts = now_rfc3339();
+    if let Some(id) = id {
+        let changed = conn
+            .execute(
+                "UPDATE rosters SET name = ?1, definition = ?2, updated_at = ?3 WHERE id = ?4",
+                params![trimmed, definition, ts, id],
+            )
+            .map_err(|e| format!("Could not update roster: {e}"))?;
+        if changed == 0 {
+            return Err("Roster not found".into());
+        }
+        return Ok(id);
+    }
+    conn.execute(
+        "INSERT INTO rosters (name, definition, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
+        params![trimmed, definition, ts, ts],
+    )
+    .map_err(|e| format!("Could not save roster: {e}"))?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn delete_roster(conn: &Connection, id: i64) -> Result<(), String> {
+    let changed = conn
+        .execute("DELETE FROM rosters WHERE id = ?1", params![id])
+        .map_err(|e| format!("Could not delete roster: {e}"))?;
+    if changed == 0 {
+        return Err("Roster not found".into());
+    }
+    Ok(())
+}
+
+pub fn get_sprites(conn: &Connection, names: &[String]) -> Result<HashMap<String, Vec<u8>>, String> {
+    let mut sprites = HashMap::new();
+    for name in names {
+        let png = conn
+            .query_row(
+                "SELECT png FROM sprites WHERE name = ?1",
+                params![name],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .optional()
+            .map_err(|e| format!("Could not read cached art: {e}"))?;
+        if let Some(png) = png {
+            sprites.insert(name.clone(), png);
+        }
+    }
+    Ok(sprites)
+}
+
+pub fn put_sprite(
+    conn: &Connection,
+    name: &str,
+    png: &[u8],
+    source_url: &str,
+) -> Result<(), String> {
+    let ts = now_rfc3339();
+    conn.execute(
+        "INSERT INTO sprites (name, png, source_url, fetched_at) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(name) DO UPDATE SET png = excluded.png, source_url = excluded.source_url, fetched_at = excluded.fetched_at",
+        params![name, png, source_url, ts],
+    )
+    .map_err(|e| format!("Could not cache art: {e}"))?;
+    Ok(())
+}
+
 pub fn delete_page(conn: &Connection, id: i64) -> Result<(), String> {
     let changed = conn
         .execute("DELETE FROM pages WHERE id = ?1", params![id])
@@ -219,5 +344,22 @@ mod tests {
         assert_eq!(page.output_png.as_deref(), Some(output.as_slice()));
         delete_page(&conn, id).unwrap();
         assert!(get_page(&conn, id).is_err());
+    }
+
+    #[test]
+    fn roster_and_sprite_roundtrip() {
+        let conn = open(Path::new(":memory:")).expect("open db");
+        let id = save_roster(&conn, None, "Field", r#"{"frame":"blue"}"#).unwrap();
+        let updated = save_roster(&conn, Some(id), "Field & Sky", r#"{"frame":"blue"}"#).unwrap();
+        assert_eq!(updated, id);
+        let listed = list_rosters(&conn).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "Field & Sky");
+        put_sprite(&conn, "Snorlax", &[1, 2, 3], "https://example.test/snorlax.png").unwrap();
+        let sprites = get_sprites(&conn, &["Snorlax".into(), "Missing".into()]).unwrap();
+        assert_eq!(sprites.get("Snorlax").map(Vec::as_slice), Some([1, 2, 3].as_slice()));
+        assert!(!sprites.contains_key("Missing"));
+        delete_roster(&conn, id).unwrap();
+        assert!(list_rosters(&conn).unwrap().is_empty());
     }
 }

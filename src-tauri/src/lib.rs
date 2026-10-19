@@ -51,6 +51,10 @@ pub fn run() {
             commands::current_coloring_png,
             commands::export_current,
             commands::export_tutorial,
+            commands::list_rosters,
+            commands::save_roster,
+            commands::delete_roster,
+            commands::cache_roster_art,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

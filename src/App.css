@@ -421,13 +421,495 @@ h2 {
   accent-color: var(--crayon);
 }
 
+.studio.guess-mode {
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100vh;
+  overflow: hidden;
+}
+
+.guess-who {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.guess-who h3,
+.guess-who h4 {
+  margin: 0 0 0.35rem;
+  font-family: Palatino, "Palatino Linotype", "Iowan Old Style", serif;
+  font-size: 1rem;
+}
+
+.guess-who h4 {
+  font-size: 0.92rem;
+  margin-top: 0.8rem;
+}
+
+.guess-who p {
+  margin: 0.35rem 0;
+}
+
+.gw-library {
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.gw-library input,
+.gw-toolbar input,
+.gw-settings input,
+.gw-columns select,
+.gw-slot-search input {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0.45rem 0.75rem;
+}
+
+.gw-library > ul {
+  min-height: 0;
+}
+
+.library-item.active,
+.library-item:hover {
+  border-color: var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.gw-swatch {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+}
+
+.gw-swatch.blue {
+  background: #1d4f9c;
+}
+
+.gw-swatch.red {
+  background: #b4332a;
+}
+
+.guess-main {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 0.8rem;
+  align-content: start;
+  padding-bottom: 1rem;
+}
+
+.gw-toolbar,
+.gw-settings,
+.gw-balance,
+.gw-stage {
+  background: var(--paper-strong);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 0.85rem 1rem;
+}
+
+.gw-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  align-items: end;
+}
+
+.gw-toolbar label,
+.gw-columns label,
+.gw-bias label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.gw-toolbar input {
+  min-width: 14rem;
+  color: var(--ink);
+}
+
+.gw-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-left: auto;
+}
+
+.gw-settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.gw-settings p,
+.gw-print-note,
+.gw-balance p {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.gw-gen-checks,
+.gw-bias {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.7rem;
+  align-items: center;
+}
+
+.gw-gen-checks label,
+.gw-bias label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--ink);
+  font-size: 0.86rem;
+}
+
+.gw-bias input {
+  width: 3.4rem;
+  border-radius: 8px;
+  padding: 0.25rem 0.35rem;
+}
+
+.gw-columns {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.gw-columns section {
+  border-radius: 16px;
+  padding: 0.65rem;
+  display: grid;
+  gap: 0.45rem;
+  align-content: start;
+}
+
+.gw-columns select {
+  width: 100%;
+}
+
+.gw-columns ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.gw-columns li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.35rem;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.55);
+  border-radius: 10px;
+  padding: 0.3rem 0.4rem;
+  color: var(--ink);
+}
+
+.gw-columns li span {
+  display: grid;
+  min-width: 0;
+}
+
+.gw-columns small,
+.gw-slot-search small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.gw-empty-slot {
+  opacity: 0.7;
+  font-size: 0.8rem;
+}
+
+.gw-columns .ghost {
+  color: var(--ink);
+  padding: 0.15rem 0.35rem;
+}
+
+.gw-slot-search {
+  display: grid;
+  gap: 0.3rem;
+  position: relative;
+}
+
+.gw-slot-search ul {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  max-height: 12rem;
+  overflow: auto;
+}
+
+.gw-slot-search button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--ink);
+  border-color: transparent;
+  border-radius: 8px;
+  padding: 0.3rem 0.45rem;
+  display: grid;
+}
+
+.gw-slot-search button:hover {
+  background: var(--paper);
+  border-color: transparent;
+  color: var(--ink);
+}
+
+.gw-slot-search p {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--ink);
+}
+
+.guess-lower {
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) minmax(280px, 1fr);
+  gap: 0.8rem;
+  align-items: start;
+}
+
+.gw-questions,
+.gw-gen-counts,
+.gw-swaps {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.gw-questions li,
+.gw-swaps li {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.gw-questions li span:last-child,
+.gw-swaps li span {
+  display: grid;
+  flex: 1;
+}
+
+.gw-questions small {
+  color: var(--muted);
+}
+
+.gw-quality {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 0.15rem 0.4rem;
+  background: var(--paper);
+  white-space: nowrap;
+}
+
+.gw-quality.great {
+  background: #d7efc4;
+}
+
+.gw-quality.okay {
+  background: #f8e7b0;
+}
+
+.gw-quality.lopsided,
+.gw-quality.easy {
+  background: #f3c7b8;
+}
+
+.gw-warn {
+  color: var(--crayon-dark);
+}
+
+.gw-balance details {
+  margin-top: 0.7rem;
+}
+
+.gw-stage .frame-heading {
+  margin-bottom: 0.35rem;
+}
+
+.gw-preview-clip {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+}
+
+.gw-preview-sheet {
+  transform-origin: top left;
+  width: 7.6in;
+  height: 10.1in;
+}
+
+.gw-library-actions {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.gw-library-actions button {
+  width: 100%;
+}
+
+button.gw-secondary,
+.gw-wizard button.gw-secondary {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+button.gw-secondary:hover:not(:disabled),
+.gw-wizard button.gw-secondary:hover:not(:disabled) {
+  background: var(--paper);
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+.gw-wizard-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(28, 23, 18, 0.35);
+}
+
+.gw-wizard {
+  width: min(40rem, 100%);
+  max-height: min(90vh, 44rem);
+  overflow: auto;
+  background: var(--paper-strong);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 1rem 1.15rem 1.15rem;
+  display: grid;
+  gap: 0.75rem;
+  align-content: start;
+}
+
+.gw-wizard-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.gw-wizard-head h2,
+.gw-wizard h3 {
+  margin: 0;
+}
+
+.gw-wizard-step,
+.gw-wizard p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.gw-choice {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.gw-choice button,
+.gw-wizard > button {
+  text-align: left;
+  background: #fff;
+  color: var(--ink);
+  border-color: var(--line);
+  border-radius: 14px;
+}
+
+.gw-choice button small,
+.gw-type-picks small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.gw-choice button:hover:not(:disabled),
+.gw-wizard > button:hover:not(:disabled) {
+  background: var(--paper);
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+.gw-choice button.active,
+.gw-wizard > button.active,
+.gw-choice button.active:hover:not(:disabled),
+.gw-wizard > button.active:hover:not(:disabled) {
+  background: var(--ink);
+  color: var(--paper-strong);
+  border-color: var(--ink);
+}
+
+.gw-choice button.active small {
+  color: rgba(255, 250, 242, 0.8);
+}
+
+.gw-type-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.gw-type-picks button {
+  border-radius: 12px;
+  min-width: 6.2rem;
+  text-align: left;
+  border-color: transparent;
+}
+
+.gw-type-picks button.active {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.gw-type-picks button:disabled {
+  opacity: 0.35;
+}
+
+.gw-wizard-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
 @media (max-width: 980px) {
   .workspace,
-  .stage {
+  .stage,
+  .guess-who,
+  .gw-settings,
+  .gw-columns,
+  .guess-lower {
     grid-template-columns: 1fr;
   }
 
   .library ul {
     max-height: 16rem;
+  }
+
+  .studio.guess-mode {
+    height: auto;
+    overflow: visible;
   }
 }

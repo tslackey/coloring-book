@@ -184,6 +184,59 @@ export function resolvePokemonQuery(query: string): string {
   return trimmed;
 }
 
+export function printDocument(documentHtml: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("aria-hidden", "true");
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    iframe.srcdoc = documentHtml;
+
+    const cleanup = () => {
+      iframe.remove();
+    };
+
+    iframe.onload = () => {
+      const frameWindow = iframe.contentWindow;
+      const images = [...(iframe.contentDocument?.querySelectorAll("img") ?? [])];
+      if (!frameWindow) {
+        cleanup();
+        reject(new Error("Could not open the print dialog"));
+        return;
+      }
+      const go = () => {
+        frameWindow.addEventListener("afterprint", cleanup, { once: true });
+        frameWindow.focus();
+        frameWindow.print();
+        resolve();
+        window.setTimeout(cleanup, 120000);
+      };
+      const pending = images.filter((image) => !image.complete);
+      if (pending.length === 0) {
+        go();
+        return;
+      }
+      let left = pending.length;
+      const done = () => {
+        left -= 1;
+        if (left <= 0) {
+          go();
+        }
+      };
+      for (const image of pending) {
+        image.addEventListener("load", done, { once: true });
+        image.addEventListener("error", done, { once: true });
+      }
+    };
+
+    document.body.appendChild(iframe);
+  });
+}
+
 export function printColoringPng(pngBase64: string, title: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const iframe = document.createElement("iframe");

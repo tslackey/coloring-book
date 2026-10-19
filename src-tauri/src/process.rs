@@ -1310,6 +1310,29 @@ pub fn preview_png_rgb(img: &RgbImage) -> Result<Vec<u8>, String> {
     encode_png_rgb(&resize_rgb(img, PREVIEW_MAX_SIDE))
 }
 
+pub fn card_sprite_png(bytes: &[u8], max_side: u32) -> Result<Vec<u8>, String> {
+    let img = decode_bytes(bytes)?;
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    let resized = if width <= max_side && height <= max_side {
+        rgba
+    } else {
+        DynamicImage::ImageRgba8(rgba)
+            .resize(max_side, max_side, FilterType::Triangle)
+            .to_rgba8()
+    };
+    let mut buf = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut buf)
+        .write_image(
+            resized.as_raw(),
+            resized.width(),
+            resized.height(),
+            ExtendedColorType::Rgba8,
+        )
+        .map_err(|e| format!("Could not encode sprite: {e}"))?;
+    Ok(buf)
+}
+
 pub fn thumb_png(png_bytes: &[u8]) -> Result<Vec<u8>, String> {
     let img = decode_bytes(png_bytes)?;
     let rgb = flatten_to_rgb(img);

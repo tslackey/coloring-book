@@ -127,6 +127,67 @@ fn rank_hits(mut hits: Vec<SearchHit>, query: &str) -> Vec<SearchHit> {
     hits
 }
 
+#[derive(Deserialize)]
+struct ImageQuery {
+    query: Option<ImageQueryBody>,
+}
+
+#[derive(Deserialize)]
+struct ImageQueryBody {
+    pages: Option<Vec<ImagePage>>,
+}
+
+#[derive(Deserialize)]
+struct ImagePage {
+    missing: Option<bool>,
+    original: Option<WikiImage>,
+}
+
+pub async fn pokemon_artwork(client: &Client, name: &str) -> Result<(Vec<u8>, String), String> {
+    let title = format!("{name} (Pokémon)");
+    let response = client
+        .get(API_URL)
+        .header("Accept", "application/json")
+        .query(&[
+            ("action", "query"),
+            ("format", "json"),
+            ("formatversion", "2"),
+            ("redirects", "1"),
+            ("titles", title.as_str()),
+            ("prop", "pageimages"),
+            ("piprop", "original"),
+        ])
+        .send()
+        .await
+        .map_err(|e| format!("Bulbapedia lookup failed for {name}: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Bulbapedia lookup for {name} returned HTTP {}",
+            response.status()
+        ));
+    }
+
+    let payload: ImageQuery = response
+        .json()
+        .await
+        .map_err(|e| format!("Could not parse Bulbapedia art for {name}: {e}"))?;
+    let page = payload
+        .query
+        .and_then(|query| query.pages)
+        .and_then(|mut pages| pages.pop())
+        .ok_or_else(|| format!("Bulbapedia has no page for {name}"))?;
+    if page.missing == Some(true) {
+        return Err(format!("Bulbapedia has no page for {name}"));
+    }
+    let source = page
+        .original
+        .map(|image| image.source)
+        .ok_or_else(|| format!("Bulbapedia has no artwork for {name}"))?;
+    let bytes = download(client, &source).await?;
+    Ok((bytes, source))
+}
+
 pub async fn download(client: &Client, url: &str) -> Result<Vec<u8>, String> {
     let response = client
         .get(url)
