@@ -4,12 +4,9 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use image::imageops::FilterType;
 use image::{DynamicImage, ExtendedColorType, GrayImage, ImageEncoder, RgbImage};
-use imageproc::contours::{find_contours, BorderType};
 use imageproc::distance_transform::Norm;
-use imageproc::drawing::{draw_filled_circle_mut, draw_polygon_mut};
-use imageproc::filter::median_filter;
-use imageproc::morphology::{close, dilate, open};
-use imageproc::point::Point;
+use imageproc::drawing::draw_filled_circle_mut;
+use imageproc::morphology::dilate;
 
 const PREVIEW_MAX_SIDE: u32 = 900;
 const THUMB_MAX_SIDE: u32 = 128;
@@ -18,6 +15,16 @@ const PIXEL_MERGE: f32 = 10.0;
 const REGION_MERGE_LARGE: f32 = 11.0;
 const REGION_MERGE_SMALL: f32 = 15.0;
 const L_WEIGHT: f32 = 0.35;
+const OFFICIAL_INK: u8 = 255;
+const COLOR_BORDER_MAX: u8 = 200;
+const TUTORIAL_LABELS: &[&str] = &[
+    "Start with the big shapes",
+    "Add the main outlines",
+    "Place the features",
+    "Draw the smaller parts",
+    "Add the details",
+    "Finish the line art",
+];
 
 pub fn decode_bytes(bytes: &[u8]) -> Result<DynamicImage, String> {
     image::load_from_memory(bytes).map_err(|e| format!("Could not decode image: {e}"))
@@ -56,9 +63,8 @@ pub fn prepare_edges(rgb: &RgbImage) -> GrayImage {
     } else {
         rgb
     };
-    let smoothed = median_filter(rgb, 1, 1);
-    let (width, height) = smoothed.dimensions();
-    let labs: Vec<(f32, f32, f32)> = smoothed.pixels().map(|p| rgb_to_lab(p.0)).collect();
+    let (width, height) = rgb.dimensions();
+    let labs: Vec<(f32, f32, f32)> = rgb.pixels().map(|p| rgb_to_lab(p.0)).collect();
     let background = background_mask(&labs, width, height);
     let linework = existing_linework(&labs, &background, width, height);
     let labels = segment_regions(&labs, &background, &linework, width, height);
@@ -67,7 +73,8 @@ pub fn prepare_edges(rgb: &RgbImage) -> GrayImage {
     strength
 }
 
-/// Default (~50) traces ink to paths and restrokes them. The slider only drops faint lines.
+/// Keep printed outlines as they are. Only path-trace extra color borders.
+/// Closing and thinning everything together fills faces and invents features.
 pub fn apply_threshold(strength: &GrayImage, percent: f32) -> GrayImage {
     let percent = percent.clamp(0.0, 100.0);
     let cutoff = if percent >= 50.0 {
@@ -76,17 +83,34 @@ pub fn apply_threshold(strength: &GrayImage, percent: f32) -> GrayImage {
         (1.0 + (50.0 - percent) / 50.0 * 90.0).round() as u8
     };
     let (width, height) = strength.dimensions();
-    let mut lines = GrayImage::new(width, height);
+    let mut official = GrayImage::new(width, height);
+    let mut color = GrayImage::new(width, height);
 
     for (x, y, pixel) in strength.enumerate_pixels() {
-        if pixel[0] >= cutoff {
-            lines.put_pixel(x, y, image::Luma([255]));
+        if pixel[0] >= 240 {
+            official.put_pixel(x, y, image::Luma([OFFICIAL_INK]));
+        } else if pixel[0] >= cutoff {
+            color.put_pixel(x, y, image::Luma([255]));
         }
     }
 
-    let lines = drop_specks(&lines, 12);
-    let lines = close(&lines, Norm::L2, 1);
-    let ink = trace_and_stroke(&lines);
+    let official = drop_specks(&official, 6);
+
+    // Extra color borders stay 1px. Closing and restroking them is what
+    // blobbed faces and drew bridges between characters.
+    let color = drop_specks(&color, 20);
+    let color = if official.pixels().any(|pixel| pixel[0] > 0) {
+        color
+    } else {
+        trace_and_stroke(&color)
+    };
+
+    let mut ink = official;
+    for (dest, src) in ink.pixels_mut().zip(color.pixels()) {
+        if src[0] > 0 {
+            dest[0] = 255;
+        }
+    }
 
     let mut out = GrayImage::new(ink.width(), ink.height());
     for (x, y, pixel) in ink.enumerate_pixels() {
@@ -95,9 +119,68 @@ pub fn apply_threshold(strength: &GrayImage, percent: f32) -> GrayImage {
     out
 }
 
+pub struct TutorialStep {
+    pub index: u32,
+    pub label: String,
+    pub image: RgbImage,
+}
+
+/// Progressive draw-along from the finished coloring page: longest strokes first.
+pub fn tutorial_from_page(page: &GrayImage) -> Vec<TutorialStep> {
+    let ink = coloring_to_ink(page);
+    let strokes = collect_strokes(&ink);
+    if strokes.is_empty() {
+        return Vec::new();
+    }
+    let mut ranked: Vec<(f32, Stroke)> = strokes
+        .into_iter()
+        .map(|stroke| (stroke_score(&stroke), stroke))
+        .collect();
+    ranked.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let buckets = bucket_strokes(ranked);
+    let (width, height) = ink.dimensions();
+    let mut prior = Vec::new();
+    let mut steps = Vec::with_capacity(buckets.len());
+    for (i, bucket) in buckets.into_iter().enumerate() {
+        let image = render_tutorial_step(width, height, &prior, &bucket);
+        prior.extend(bucket);
+        steps.push(TutorialStep {
+            index: (i + 1) as u32,
+            label: TUTORIAL_LABELS
+                .get(i)
+                .copied()
+                .unwrap_or("Finish the line art")
+                .to_string(),
+            image,
+        });
+    }
+    steps
+}
+
+pub fn tutorial_sheet(steps: &[TutorialStep]) -> RgbImage {
+    let images: Vec<RgbImage> = steps
+        .iter()
+        .map(|step| resize_rgb(&step.image, 640))
+        .collect();
+    compose_sheet(&images)
+}
+
+pub fn tutorial_preview_pngs(page: &GrayImage) -> Result<Vec<(u32, String, Vec<u8>)>, String> {
+    tutorial_from_page(page)
+        .into_iter()
+        .map(|step| {
+            let png = preview_png_rgb(&step.image)?;
+            Ok((step.index, step.label, png))
+        })
+        .collect()
+}
+
 fn should_upsample(width: u32, height: u32) -> bool {
     let side = width.max(height);
-    (200..800).contains(&side)
+    // Official art around 400–600px already has 1px outlines. Doubling them
+    // into a soft gradient hides the star and other sharp color borders.
+    (200..360).contains(&side)
 }
 
 fn background_mask(labs: &[(f32, f32, f32)], width: u32, height: u32) -> Vec<bool> {
@@ -157,7 +240,8 @@ fn median_lab(samples: &[(f32, f32, f32)]) -> (f32, f32, f32) {
 }
 
 fn existing_linework(labs: &[(f32, f32, f32)], background: &[bool], width: u32, height: u32) -> GrayImage {
-    let mut core = GrayImage::new(width, height);
+    let mut ink = GrayImage::new(width, height);
+    let mut dark = vec![false; labs.len()];
     for y in 0..height {
         for x in 0..width {
             let i = idx(x, y, width);
@@ -165,101 +249,210 @@ fn existing_linework(labs: &[(f32, f32, f32)], background: &[bool], width: u32, 
                 continue;
             }
             let chroma = (labs[i].1 * labs[i].1 + labs[i].2 * labs[i].2).sqrt();
-            if labs[i].0 < 16.0 && chroma < 10.0 {
-                core.put_pixel(x, y, image::Luma([255]));
-            }
-        }
-    }
-    let halo = dilate(&core, Norm::L2, 1);
-    let mut ink = core.clone();
-    for y in 0..height {
-        for x in 0..width {
-            if halo.get_pixel(x, y)[0] == 0 || ink.get_pixel(x, y)[0] > 0 {
+            if labs[i].0 >= 26.0 || chroma >= 16.0 {
                 continue;
             }
-            let i = idx(x, y, width);
-            if background[i] {
-                continue;
-            }
-            let chroma = (labs[i].1 * labs[i].1 + labs[i].2 * labs[i].2).sqrt();
-            if labs[i].0 < 36.0 && chroma < 14.0 {
+            dark[i] = true;
+            let brighter = neighbors8(x, y, width, height).into_iter().any(|(nx, ny)| {
+                labs[idx(nx, ny, width)].0 > labs[i].0 + 12.0
+            });
+            if brighter {
                 ink.put_pixel(x, y, image::Luma([255]));
             }
         }
     }
-    close(&ink, Norm::L2, 1)
+    keep_small_dark_details(&mut ink, &dark, width, height);
+    dilate(&ink, Norm::L2, 1)
+}
+
+fn keep_small_dark_details(ink: &mut GrayImage, dark: &[bool], width: u32, height: u32) {
+    let mut seen = vec![false; dark.len()];
+    for y in 0..height {
+        for x in 0..width {
+            let start = idx(x, y, width);
+            if !dark[start] || seen[start] {
+                continue;
+            }
+            let mut stack = vec![(x, y)];
+            let mut blob = Vec::new();
+            seen[start] = true;
+            while let Some((cx, cy)) = stack.pop() {
+                blob.push((cx, cy));
+                for (nx, ny) in neighbors8(cx, cy, width, height) {
+                    let i = idx(nx, ny, width);
+                    if seen[i] || !dark[i] {
+                        continue;
+                    }
+                    seen[i] = true;
+                    stack.push((nx, ny));
+                }
+            }
+            if blob.len() < 3 || blob.len() > 48 {
+                continue;
+            }
+            for (bx, by) in blob {
+                ink.put_pixel(bx, by, image::Luma([255]));
+            }
+        }
+    }
+}
+
+fn near_ink(linework: &GrayImage, x: u32, y: u32, width: u32, height: u32, radius: i32) -> bool {
+    let x = x as i32;
+    let y = y as i32;
+    for dy in -radius..=radius {
+        for dx in -radius..=radius {
+            let nx = x + dx;
+            let ny = y + dy;
+            if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                continue;
+            }
+            if linework.get_pixel(nx as u32, ny as u32)[0] > 0 {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn or_mask(strength: &mut GrayImage, mask: &GrayImage) {
     for (dest, src) in strength.pixels_mut().zip(mask.pixels()) {
         if src[0] > 0 {
-            dest[0] = dest[0].max(255);
+            dest[0] = dest[0].max(OFFICIAL_INK);
         }
     }
 }
 
-fn trace_and_stroke(ink: &GrayImage) -> GrayImage {
-    let (width, height) = ink.dimensions();
-    let scale = if width.max(height) < 1100 { 2.0 } else { 1.0 };
-    let fills = open(ink, Norm::L2, 2);
-    let skeleton = zhang_suen_thin(ink);
-    let radius = ((stroke_radius(width, height) as f32) * scale).round() as i32;
-    let mut canvas = GrayImage::new(
-        (width as f32 * scale).round() as u32,
-        (height as f32 * scale).round() as u32,
-    );
+struct Stroke {
+    pts: Vec<(f32, f32)>,
+    closed: bool,
+}
 
+fn coloring_to_ink(page: &GrayImage) -> GrayImage {
+    let mut ink = GrayImage::new(page.width(), page.height());
+    for (x, y, pixel) in page.enumerate_pixels() {
+        if pixel[0] < 128 {
+            ink.put_pixel(x, y, image::Luma([255]));
+        }
+    }
+    ink
+}
+
+fn collect_strokes(ink: &GrayImage) -> Vec<Stroke> {
+    let skeleton = zhang_suen_thin(ink);
+    let mut strokes = Vec::new();
     for path in walk_skeleton(&skeleton) {
         if path.len() < 3 {
             continue;
         }
         let closed = path_is_closed(&path);
-        let mut pts = rdp(&path, 1.7);
+        let mut pts = rdp(&path, if closed { 1.1 } else { 1.4 });
         if pts.len() < 2 {
             continue;
         }
-        pts = chaikin(&pts, closed);
-        pts = chaikin(&pts, closed);
-        pts = chaikin(&pts, closed);
+        if !closed {
+            pts = chaikin(&pts, false);
+        }
+        strokes.push(Stroke { pts, closed });
+    }
+    strokes
+}
+
+fn stroke_length(pts: &[(f32, f32)]) -> f32 {
+    pts.windows(2)
+        .map(|pair| {
+            let dx = pair[1].0 - pair[0].0;
+            let dy = pair[1].1 - pair[0].1;
+            (dx * dx + dy * dy).sqrt()
+        })
+        .sum()
+}
+
+fn stroke_score(stroke: &Stroke) -> f32 {
+    let len = stroke_length(&stroke.pts).max(1.0);
+    let mut min_x = f32::MAX;
+    let mut max_x = f32::MIN;
+    let mut min_y = f32::MAX;
+    let mut max_y = f32::MIN;
+    for &(x, y) in &stroke.pts {
+        min_x = min_x.min(x);
+        max_x = max_x.max(x);
+        min_y = min_y.min(y);
+        max_y = max_y.max(y);
+    }
+    let span = ((max_x - min_x).max(1.0) * (max_y - min_y).max(1.0)).sqrt();
+    let closed = if stroke.closed { 1.3 } else { 1.0 };
+    (len + span * 0.35) * closed
+}
+
+fn bucket_strokes(ranked: Vec<(f32, Stroke)>) -> Vec<Vec<Stroke>> {
+    let n = match ranked.len() {
+        0 => return Vec::new(),
+        1..=3 => ranked.len(),
+        4..=8 => 4,
+        _ => 6,
+    };
+    let total: f32 = ranked.iter().map(|(score, _)| *score).sum();
+    let target = (total / n as f32).max(1.0);
+    let remaining_total = ranked.len();
+    let mut buckets: Vec<Vec<Stroke>> = Vec::new();
+    let mut current = Vec::new();
+    let mut acc = 0.0;
+    for (i, (score, stroke)) in ranked.into_iter().enumerate() {
+        current.push(stroke);
+        acc += score;
+        let remaining = remaining_total - i - 1;
+        let left = n.saturating_sub(buckets.len() + 1);
+        if acc >= target && left <= remaining && buckets.len() + 1 < n {
+            buckets.push(std::mem::take(&mut current));
+            acc = 0.0;
+        }
+    }
+    if !current.is_empty() {
+        buckets.push(current);
+    }
+    buckets
+}
+
+fn stroke_scale(width: u32, height: u32) -> f32 {
+    if width.max(height) < 1100 {
+        2.0
+    } else {
+        1.0
+    }
+}
+
+fn paint_strokes(canvas: &mut GrayImage, strokes: &[Stroke], scale: f32, radius: i32, value: u8) {
+    for stroke in strokes {
+        let mut pts = stroke.pts.clone();
         if scale != 1.0 {
             for point in &mut pts {
                 point.0 *= scale;
                 point.1 *= scale;
             }
         }
-        draw_round_polyline(&mut canvas, &pts, radius.max(2), closed);
+        let width_px = radius.max(1);
+        draw_round_polyline(canvas, &pts, width_px, stroke.closed, value);
     }
+}
 
-    for contour in find_contours::<i32>(&fills) {
-        if contour.points.len() < 8 {
-            continue;
-        }
-        let mut pts: Vec<(f32, f32)> = contour
-            .points
-            .iter()
-            .map(|p| (p.x as f32 * scale, p.y as f32 * scale))
-            .collect();
-        pts = rdp(&pts, 1.8 * scale);
-        pts = chaikin(&pts, true);
-        pts = chaikin(&pts, true);
-        if pts.len() < 3 {
-            continue;
-        }
-        let poly: Vec<Point<i32>> = pts
-            .iter()
-            .map(|(x, y)| Point::new(x.round() as i32, y.round() as i32))
-            .collect();
-        let color = match contour.border_type {
-            BorderType::Outer => image::Luma([255]),
-            BorderType::Hole => image::Luma([0]),
-        };
-        draw_polygon_mut(&mut canvas, &poly, color);
-    }
+fn trace_and_stroke(ink: &GrayImage) -> GrayImage {
+    let (width, height) = ink.dimensions();
+    let scale = stroke_scale(width, height);
+    let radius = ((stroke_radius(width, height) as f32) * scale).round() as i32;
+    let mut canvas = GrayImage::new(
+        (width as f32 * scale).round() as u32,
+        (height as f32 * scale).round() as u32,
+    );
+    paint_strokes(&mut canvas, &collect_strokes(ink), scale, radius, 255);
+    downsample_ink(&canvas, width, height)
+}
 
-    if scale == 1.0 {
-        return canvas;
+fn downsample_ink(canvas: &GrayImage, width: u32, height: u32) -> GrayImage {
+    if canvas.width() == width && canvas.height() == height {
+        return canvas.clone();
     }
-    let down = DynamicImage::ImageLuma8(canvas)
+    let down = DynamicImage::ImageLuma8(canvas.clone())
         .resize_exact(width, height, FilterType::Triangle)
         .to_luma8();
     let mut out = GrayImage::new(width, height);
@@ -271,8 +464,65 @@ fn trace_and_stroke(ink: &GrayImage) -> GrayImage {
     out
 }
 
+fn render_tutorial_step(width: u32, height: u32, prior: &[Stroke], current: &[Stroke]) -> RgbImage {
+    let scale = stroke_scale(width, height);
+    let radius = ((stroke_radius(width, height) as f32) * scale).round() as i32;
+    let mut canvas = GrayImage::new(
+        (width as f32 * scale).round() as u32,
+        (height as f32 * scale).round() as u32,
+    );
+    paint_strokes(&mut canvas, prior, scale, radius, 120);
+    paint_strokes(&mut canvas, current, scale, radius, 255);
+    let ink = if canvas.width() == width && canvas.height() == height {
+        canvas
+    } else {
+        DynamicImage::ImageLuma8(canvas)
+            .resize_exact(width, height, FilterType::Triangle)
+            .to_luma8()
+    };
+    let mut rgb = RgbImage::new(width, height);
+    for (x, y, pixel) in ink.enumerate_pixels() {
+        let color = if pixel[0] >= 160 {
+            image::Rgb([28, 23, 18])
+        } else if pixel[0] >= 40 {
+            image::Rgb([188, 178, 164])
+        } else {
+            image::Rgb([255, 255, 255])
+        };
+        rgb.put_pixel(x, y, color);
+    }
+    rgb
+}
+
+fn compose_sheet(images: &[RgbImage]) -> RgbImage {
+    if images.is_empty() {
+        return RgbImage::from_pixel(1, 1, image::Rgb([246, 239, 227]));
+    }
+    let width = images.iter().map(|img| img.width()).max().unwrap_or(1);
+    let height = images.iter().map(|img| img.height()).max().unwrap_or(1);
+    let n = images.len() as u32;
+    let cols = if n <= 3 { n } else { 3 };
+    let rows = (n + cols - 1) / cols;
+    let pad = 24;
+    let gap = 18;
+    let out_w = pad * 2 + cols * width + cols.saturating_sub(1) * gap;
+    let out_h = pad * 2 + rows * height + rows.saturating_sub(1) * gap;
+    let paper = image::Rgb([246, 239, 227]);
+    let mut out = RgbImage::from_pixel(out_w, out_h, paper);
+    for (i, img) in images.iter().enumerate() {
+        let col = i as u32 % cols;
+        let row = i as u32 / cols;
+        let x0 = pad + col * (width + gap);
+        let y0 = pad + row * (height + gap);
+        for (x, y, pixel) in img.enumerate_pixels() {
+            out.put_pixel(x0 + x, y0 + y, *pixel);
+        }
+    }
+    out
+}
+
 fn stroke_radius(width: u32, height: u32) -> i32 {
-    (width.max(height) / 200).clamp(2, 5) as i32
+    (width.max(height) / 420).clamp(1, 2) as i32
 }
 
 fn path_is_closed(path: &[(f32, f32)]) -> bool {
@@ -594,7 +844,7 @@ fn chaikin(points: &[(f32, f32)], closed: bool) -> Vec<(f32, f32)> {
     out
 }
 
-fn draw_round_polyline(ink: &mut GrayImage, points: &[(f32, f32)], radius: i32, closed: bool) {
+fn draw_round_polyline(ink: &mut GrayImage, points: &[(f32, f32)], radius: i32, closed: bool, value: u8) {
     if points.is_empty() {
         return;
     }
@@ -603,11 +853,11 @@ fn draw_round_polyline(ink: &mut GrayImage, points: &[(f32, f32)], radius: i32, 
     for i in 0..count {
         let start = points[i];
         let end = points[(i + 1) % points.len()];
-        stamp_disk(ink, start, end, radius);
+        stamp_disk(ink, start, end, radius, value);
     }
 }
 
-fn stamp_disk(ink: &mut GrayImage, start: (f32, f32), end: (f32, f32), radius: i32) {
+fn stamp_disk(ink: &mut GrayImage, start: (f32, f32), end: (f32, f32), radius: i32, value: u8) {
     let dx = end.0 - start.0;
     let dy = end.1 - start.1;
     let dist = (dx * dx + dy * dy).sqrt().max(1.0);
@@ -616,7 +866,7 @@ fn stamp_disk(ink: &mut GrayImage, start: (f32, f32), end: (f32, f32), radius: i
         let t = step as f32 / steps as f32;
         let x = (start.0 + dx * t).round() as i32;
         let y = (start.1 + dy * t).round() as i32;
-        draw_filled_circle_mut(ink, (x, y), radius, image::Luma([255]));
+        draw_filled_circle_mut(ink, (x, y), radius, image::Luma([value]));
     }
 }
 
@@ -862,24 +1112,34 @@ fn border_strength(
             if background[i] || linework.get_pixel(x, y)[0] > 0 {
                 continue;
             }
+            if near_ink(linework, x, y, width, height, 2) {
+                continue;
+            }
             let here = labels[i];
             let mut best = 0.0_f32;
             for (nx, ny) in neighbors8(x, y, width, height) {
                 let j = idx(nx, ny, width);
+                let local = delta_e(labs[i], labs[j]);
                 let next = labels[j];
                 if next == here {
+                    // Only a missed hue step, never JPEG/shading noise.
+                    if local >= 36.0 {
+                        best = best.max(local);
+                    }
                     continue;
                 }
                 if background[j] {
-                    best = best.max(80.0);
                     continue;
                 }
                 let smallest = sizes[&here].min(sizes[&next]);
                 let contrast = delta_e(means[&here], means[&next]);
-                if smallest < min_keep && contrast < 22.0 {
+                if contrast < 24.0 && local < 28.0 {
                     continue;
                 }
-                best = best.max(contrast.max(18.0));
+                if smallest < min_keep && contrast < 32.0 {
+                    continue;
+                }
+                best = best.max(contrast.max(local));
             }
             if best > 0.0 {
                 strength.put_pixel(x, y, image::Luma([delta_e_to_strength(best)]));
@@ -1018,7 +1278,7 @@ fn delta_e_to_strength(delta: f32) -> u8 {
     if delta <= 0.5 {
         return 0;
     }
-    (delta * 4.2).clamp(0.0, 255.0).round() as u8
+    (delta * 4.2).clamp(0.0, COLOR_BORDER_MAX as f32).round() as u8
 }
 
 pub fn encode_png_rgb(img: &RgbImage) -> Result<Vec<u8>, String> {
@@ -1172,6 +1432,23 @@ mod tests {
     }
 
     #[test]
+    fn thin_black_outline_stays_hollow() {
+        let mut rgb = RgbImage::from_pixel(64, 64, Rgb([255, 220, 40]));
+        for x in 16..48 {
+            rgb.put_pixel(x, 16, Rgb([8, 8, 8]));
+            rgb.put_pixel(x, 47, Rgb([8, 8, 8]));
+        }
+        for y in 16..48 {
+            rgb.put_pixel(16, y, Rgb([8, 8, 8]));
+            rgb.put_pixel(47, y, Rgb([8, 8, 8]));
+        }
+        let out = apply_threshold(&prepare_edges(&rgb), DEFAULT_THRESHOLD);
+        assert_eq!(out.get_pixel(16, 32)[0], 0);
+        assert_eq!(out.get_pixel(32, 32)[0], 255, "inside the outline should stay paper");
+        assert_eq!(out.get_pixel(4, 4)[0], 255);
+    }
+
+    #[test]
     fn dark_gradient_does_not_fill_with_ink() {
         let mut rgb = RgbImage::new(64, 64);
         for (x, y, pixel) in rgb.enumerate_pixels_mut() {
@@ -1189,7 +1466,7 @@ mod tests {
 
     #[test]
     fn write_pokemon_samples_if_present() {
-        for name in ["pikachu", "grapploct"] {
+        for name in ["pikachu", "grapploct", "rocket"] {
             let path = format!("/tmp/{name}-src.png");
             if !std::path::Path::new(&path).exists() {
                 continue;
@@ -1205,6 +1482,39 @@ mod tests {
             let ink = out.pixels().filter(|pixel| pixel[0] == 0).count();
             let total = out.width() as usize * out.height() as usize;
             assert!(ink > 0 && ink < total / 3, "{name} should be line art, ink={ink}");
+            let steps = tutorial_from_page(&out);
+            assert!(steps.len() >= 2, "{name} should have a draw-along");
+            std::fs::write(
+                format!("/tmp/{name}-tutorial.png"),
+                encode_png_rgb(&tutorial_sheet(&steps)).unwrap(),
+            )
+            .unwrap();
         }
+    }
+
+    #[test]
+    fn tutorial_adds_ink_each_step() {
+        let mut rgb = RgbImage::new(48, 48);
+        for (x, y, pixel) in rgb.enumerate_pixels_mut() {
+            *pixel = if x < 16 {
+                Rgb([255, 220, 20])
+            } else if x < 32 {
+                Rgb([40, 80, 200])
+            } else {
+                Rgb([230, 40, 40])
+            };
+            let _ = y;
+        }
+        let page = apply_threshold(&prepare_edges(&rgb), DEFAULT_THRESHOLD);
+        let steps = tutorial_from_page(&page);
+        assert!(steps.len() >= 2, "expected multiple draw-along steps");
+        let marks = |img: &RgbImage| {
+            img.pixels()
+                .filter(|pixel| pixel[0] < 250 || pixel[1] < 250 || pixel[2] < 250)
+                .count()
+        };
+        let first = marks(&steps[0].image);
+        let last = marks(&steps[steps.len() - 1].image);
+        assert!(last >= first, "later steps should keep earlier strokes");
     }
 }

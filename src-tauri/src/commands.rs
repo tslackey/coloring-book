@@ -28,6 +28,13 @@ pub struct Workspace {
 }
 
 #[derive(Serialize)]
+pub struct TutorialStepView {
+    pub index: u32,
+    pub label: String,
+    pub png_base64: String,
+}
+
+#[derive(Serialize)]
 pub struct WorkspaceView {
     pub title: String,
     pub source: String,
@@ -35,13 +42,28 @@ pub struct WorkspaceView {
     pub page_id: Option<i64>,
     pub original_png_base64: String,
     pub coloring_png_base64: String,
+    pub tutorial: Vec<TutorialStepView>,
     pub threshold: f32,
 }
 
 #[derive(Serialize)]
 pub struct PreviewView {
     pub coloring_png_base64: String,
+    pub tutorial: Vec<TutorialStepView>,
     pub threshold: f32,
+}
+
+fn tutorial_views(page: &GrayImage) -> Result<Vec<TutorialStepView>, String> {
+    process::tutorial_preview_pngs(page)?
+        .into_iter()
+        .map(|(index, label, png)| {
+            Ok(TutorialStepView {
+                index,
+                label,
+                png_base64: process::to_base64(&png),
+            })
+        })
+        .collect()
 }
 
 fn view_from_workspace(workspace: &Workspace, threshold: f32) -> Result<WorkspaceView, String> {
@@ -54,6 +76,7 @@ fn view_from_workspace(workspace: &Workspace, threshold: f32) -> Result<Workspac
         page_id: workspace.page_id,
         original_png_base64: process::to_base64(&workspace.original_preview_png),
         coloring_png_base64: process::to_base64(&coloring_png),
+        tutorial: tutorial_views(&coloring)?,
         threshold,
     })
 }
@@ -185,6 +208,7 @@ pub fn preview(threshold: f32, state: State<AppState>) -> Result<PreviewView, St
     let coloring_png = process::preview_png_gray(&coloring)?;
     Ok(PreviewView {
         coloring_png_base64: process::to_base64(&coloring_png),
+        tutorial: tutorial_views(&coloring)?,
         threshold,
     })
 }
@@ -292,6 +316,29 @@ pub fn export_page(id: i64, path: String, state: State<AppState>) -> Result<(), 
     write_png(&path, &png)
 }
 
+#[derive(Serialize)]
+pub struct ColoringPngView {
+    pub title: String,
+    pub png_base64: String,
+}
+
+#[tauri::command]
+pub fn current_coloring_png(threshold: f32, state: State<AppState>) -> Result<ColoringPngView, String> {
+    let workspace = state
+        .workspace
+        .lock()
+        .map_err(|_| "Workspace lock was poisoned")?;
+    let workspace = workspace
+        .as_ref()
+        .ok_or_else(|| "Open, paste, or search for an image first".to_string())?;
+    let coloring = process::apply_threshold(&workspace.post_negate, threshold);
+    let png = process::encode_png_gray(&coloring)?;
+    Ok(ColoringPngView {
+        title: workspace.title.clone(),
+        png_base64: process::to_base64(&png),
+    })
+}
+
 #[tauri::command]
 pub fn export_current(path: String, threshold: f32, state: State<AppState>) -> Result<(), String> {
     let workspace = state
@@ -303,6 +350,25 @@ pub fn export_current(path: String, threshold: f32, state: State<AppState>) -> R
         .ok_or_else(|| "Open, paste, or search for an image first".to_string())?;
     let coloring = process::apply_threshold(&workspace.post_negate, threshold);
     let png = process::encode_png_gray(&coloring)?;
+    write_png(&path, &png)
+}
+
+#[tauri::command]
+pub fn export_tutorial(path: String, threshold: f32, state: State<AppState>) -> Result<(), String> {
+    let workspace = state
+        .workspace
+        .lock()
+        .map_err(|_| "Workspace lock was poisoned")?;
+    let workspace = workspace
+        .as_ref()
+        .ok_or_else(|| "Open, paste, or search for an image first".to_string())?;
+    let coloring = process::apply_threshold(&workspace.post_negate, threshold);
+    let steps = process::tutorial_from_page(&coloring);
+    if steps.is_empty() {
+        return Err("Could not build a draw-along from this page".to_string());
+    }
+    let sheet = process::tutorial_sheet(&steps);
+    let png = process::encode_png_rgb(&sheet)?;
     write_png(&path, &png)
 }
 

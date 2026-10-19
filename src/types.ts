@@ -1,3 +1,9 @@
+export type TutorialStep = {
+  index: number;
+  label: string;
+  png_base64: string;
+};
+
 export type WorkspaceView = {
   title: string;
   source: string;
@@ -5,12 +11,19 @@ export type WorkspaceView = {
   page_id: number | null;
   original_png_base64: string;
   coloring_png_base64: string;
+  tutorial: TutorialStep[];
   threshold: number;
 };
 
 export type PreviewView = {
   coloring_png_base64: string;
+  tutorial: TutorialStep[];
   threshold: number;
+};
+
+export type ColoringPngView = {
+  title: string;
+  png_base64: string;
 };
 
 export type SearchHit = {
