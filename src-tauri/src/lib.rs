@@ -3,6 +3,9 @@ mod commands;
 mod db;
 mod process;
 
+#[cfg(target_os = "macos")]
+mod print_mac;
+
 use std::sync::Mutex;
 
 use commands::AppState;
@@ -55,6 +58,8 @@ pub fn run() {
             commands::save_roster,
             commands::delete_roster,
             commands::cache_roster_art,
+            commands::replace_roster_art,
+            commands::print_page,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,3 +1,5 @@
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { POKEMON_NAMES } from "./pokemon-names";
 
 const SUGGESTION_LIMIT = 10;
@@ -184,80 +186,119 @@ export function resolvePokemonQuery(query: string): string {
   return trimmed;
 }
 
-export function printDocument(documentHtml: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const iframe = document.createElement("iframe");
-    iframe.setAttribute("aria-hidden", "true");
-    iframe.style.position = "fixed";
-    iframe.style.right = "0";
-    iframe.style.bottom = "0";
-    iframe.style.width = "0";
-    iframe.style.height = "0";
-    iframe.style.border = "0";
-    iframe.srcdoc = documentHtml;
+function errorText(err: unknown): string {
+  if (typeof err === "string" && err.trim()) {
+    return err;
+  }
+  if (err instanceof Error && err.message) {
+    return err.message;
+  }
+  return "Could not open the print dialog";
+}
 
-    const cleanup = () => {
-      iframe.remove();
-    };
+export async function printDocument(documentHtml: string): Promise<void> {
+  const parsed = new DOMParser().parseFromString(documentHtml, "text/html");
+  const pageCss = [...parsed.querySelectorAll("style")].map((node) => node.textContent ?? "").join("\n");
+  document.getElementById("print-host")?.remove();
+  document.getElementById("print-host-style")?.remove();
 
-    iframe.onload = () => {
-      const frameWindow = iframe.contentWindow;
-      const images = [...(iframe.contentDocument?.querySelectorAll("img") ?? [])];
-      if (!frameWindow) {
-        cleanup();
-        reject(new Error("Could not open the print dialog"));
-        return;
+  const style = document.createElement("style");
+  style.id = "print-host-style";
+  style.textContent = `
+    ${pageCss}
+    #print-host { display: none !important; }
+    body.printing {
+      background: #fff !important;
+      height: auto !important;
+      overflow: visible !important;
+    }
+    body.printing #root { display: none !important; }
+    body.printing #print-host {
+      display: block !important;
+      height: auto !important;
+      overflow: visible !important;
+    }
+    @media print {
+      html, body {
+        margin: 0 !important;
+        background: #fff !important;
+        height: auto !important;
+        overflow: visible !important;
       }
-      const go = () => {
-        frameWindow.addEventListener("afterprint", cleanup, { once: true });
-        frameWindow.focus();
-        frameWindow.print();
-        resolve();
-        window.setTimeout(cleanup, 120000);
-      };
-      const pending = images.filter((image) => !image.complete);
-      if (pending.length === 0) {
-        go();
-        return;
-      }
-      let left = pending.length;
-      const done = () => {
-        left -= 1;
-        if (left <= 0) {
-          go();
+      #root { display: none !important; }
+      #print-host { display: block !important; }
+    }
+  `;
+  const host = document.createElement("div");
+  host.id = "print-host";
+  host.setAttribute("aria-hidden", "true");
+  host.innerHTML = parsed.body.innerHTML;
+  document.head.appendChild(style);
+  document.body.appendChild(host);
+  document.body.classList.add("printing");
+
+  const cleanup = () => {
+    document.body.classList.remove("printing");
+    host.remove();
+    style.remove();
+  };
+
+  try {
+    await Promise.all(
+      [...host.querySelectorAll("img")].map(
+        (img) =>
+          new Promise<void>((resolve) => {
+            if (img.complete) {
+              resolve();
+              return;
+            }
+            img.addEventListener("load", () => resolve(), { once: true });
+            img.addEventListener("error", () => resolve(), { once: true });
+          }),
+      ),
+    );
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+    if ("__TAURI_INTERNALS__" in window) {
+      const landscape = /@page\s*\{[^}]*landscape/.test(pageCss);
+      let resolveFinished: () => void = () => {};
+      let rejectFinished: (error: Error) => void = () => {};
+      const finished = new Promise<void>((resolve, reject) => {
+        resolveFinished = resolve;
+        rejectFinished = reject;
+      });
+      const unlisten = await listen<{ ok: boolean; error?: string | null }>("print-finished", (event) => {
+        if (event.payload.ok) {
+          resolveFinished();
+        } else {
+          rejectFinished(new Error(event.payload.error || "Could not open the print dialog"));
         }
-      };
-      for (const image of pending) {
-        image.addEventListener("load", done, { once: true });
-        image.addEventListener("error", done, { once: true });
+      });
+      try {
+        await invoke("print_page", { landscape });
+        await finished;
+      } finally {
+        unlisten();
       }
-    };
-
-    document.body.appendChild(iframe);
-  });
+    } else {
+      window.print();
+    }
+  } catch (err) {
+    cleanup();
+    throw new Error(errorText(err));
+  }
+  cleanup();
 }
 
 export function printColoringPng(pngBase64: string, title: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const iframe = document.createElement("iframe");
-    iframe.setAttribute("aria-hidden", "true");
-    iframe.style.position = "fixed";
-    iframe.style.right = "0";
-    iframe.style.bottom = "0";
-    iframe.style.width = "0";
-    iframe.style.height = "0";
-    iframe.style.border = "0";
-    iframe.srcdoc = `<!doctype html>
+  return printDocument(`<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
     <title>${escapeHtml(title)}</title>
     <style>
-      @page { margin: 0.45in; }
-      html, body {
-        margin: 0;
-        background: #fff;
-      }
+      @page { size: letter portrait; margin: 0.45in; }
       img {
         display: block;
         width: 100%;
@@ -271,40 +312,7 @@ export function printColoringPng(pngBase64: string, title: string): Promise<void
   <body>
     <img src="data:image/png;base64,${pngBase64}" alt="" />
   </body>
-</html>`;
-
-    const cleanup = () => {
-      iframe.remove();
-    };
-
-    iframe.onload = () => {
-      const frameWindow = iframe.contentWindow;
-      const image = iframe.contentDocument?.querySelector("img");
-      if (!frameWindow || !image) {
-        cleanup();
-        reject(new Error("Could not open the print dialog"));
-        return;
-      }
-      const go = () => {
-        frameWindow.addEventListener("afterprint", cleanup, { once: true });
-        frameWindow.focus();
-        frameWindow.print();
-        resolve();
-        window.setTimeout(cleanup, 120000);
-      };
-      if (image.complete) {
-        go();
-      } else {
-        image.onload = go;
-        image.onerror = () => {
-          cleanup();
-          reject(new Error("Could not load the coloring page for printing"));
-        };
-      }
-    };
-
-    document.body.appendChild(iframe);
-  });
+</html>`);
 }
 
 function escapeHtml(value: string): string {

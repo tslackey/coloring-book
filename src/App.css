@@ -474,25 +474,15 @@ h2 {
   min-height: 0;
 }
 
+.gw-library .library-item {
+  grid-template-columns: 1fr;
+}
+
 .library-item.active,
 .library-item:hover {
   border-color: var(--ink);
   background: var(--paper);
   color: var(--ink);
-}
-
-.gw-swatch {
-  width: 44px;
-  height: 44px;
-  border-radius: 8px;
-}
-
-.gw-swatch.blue {
-  background: #1d4f9c;
-}
-
-.gw-swatch.red {
-  background: #b4332a;
 }
 
 .guess-main {
@@ -746,16 +736,149 @@ h2 {
   margin-bottom: 0.35rem;
 }
 
+.gw-stage-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.gw-stage-tools > button {
+  padding: 0.28rem 0.75rem;
+  font-size: 0.78rem;
+}
+
+.gw-preview-sheet .gw-pick,
+.gw-zoom-page .gw-pick {
+  cursor: pointer;
+}
+
+.gw-preview-sheet .gw-foot,
+.gw-preview-sheet .gw-foot *,
+.gw-zoom-page .gw-foot,
+.gw-zoom-page .gw-foot * {
+  cursor: default;
+}
+
 .gw-preview-clip {
   position: relative;
   overflow: hidden;
   width: 100%;
 }
 
+.gw-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: rgba(28, 23, 18, 0.78);
+}
+
+.gw-zoom-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.55rem 0.8rem;
+  background: var(--paper-strong);
+  border-bottom: 1px solid var(--line);
+}
+
+.gw-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.15rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+}
+
+.gw-zoom-controls button {
+  background: transparent;
+  color: var(--ink);
+  border-color: transparent;
+  padding: 0.28rem 0.65rem;
+  font-size: 0.78rem;
+}
+
+.gw-zoom-controls button.active {
+  background: var(--ink);
+  color: var(--paper-strong);
+  border-color: var(--ink);
+}
+
+.gw-zoom-controls span {
+  min-width: 3rem;
+  padding: 0 0.35rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.gw-zoom-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.gw-zoom-bar .ghost {
+  margin-left: auto;
+  color: var(--ink);
+}
+
+.gw-zoom-stage {
+  min-height: 0;
+  overflow: auto;
+  padding: 1rem;
+}
+
+.gw-zoom-sizer {
+  margin: 0 auto;
+}
+
+.gw-zoom-page {
+  width: 11in;
+  height: 8.5in;
+  box-sizing: border-box;
+  padding: 0.5625in 0.6875in;
+  background: #fff;
+  transform-origin: top left;
+}
+
+.gw-wizard-backdrop.gw-art-backdrop {
+  z-index: 40;
+}
+
+.gw-art-picker {
+  width: min(52rem, 100%);
+}
+
+.gw-art-search {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.gw-art-search input {
+  flex: 1;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0.45rem 0.75rem;
+}
+
+.gw-art-picker .hit-grid {
+  max-height: min(52vh, 28rem);
+  overflow: auto;
+  margin-top: 0;
+}
+
 .gw-preview-sheet {
   transform-origin: top left;
-  width: 7.6in;
-  height: 10.1in;
+  width: 9.625in;
+  height: 7.375in;
 }
 
 .gw-library-actions {
@@ -814,13 +937,27 @@ button.gw-secondary:hover:not(:disabled),
 .gw-wizard-head h2,
 .gw-wizard h3 {
   margin: 0;
+  color: var(--ink);
+}
+
+.gw-wizard h2 {
+  font-size: 1.45rem;
+}
+
+.gw-wizard h3 {
+  font-size: 1.25rem;
 }
 
 .gw-wizard-step,
 .gw-wizard p {
   margin: 0;
-  color: var(--muted);
-  font-size: 0.9rem;
+  color: var(--ink);
+  font-size: 1.02rem;
+  line-height: 1.4;
+}
+
+.gw-wizard-step {
+  font-weight: 700;
 }
 
 .gw-choice {
@@ -837,12 +974,20 @@ button.gw-secondary:hover:not(:disabled),
   border-radius: 14px;
 }
 
-.gw-choice button small,
-.gw-type-picks small {
+.gw-choice button small {
   display: block;
   color: var(--muted);
-  font-size: 0.75rem;
-  font-weight: 500;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.gw-type-picks button small {
+  display: block;
+  margin-top: 0.12rem;
+  color: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .gw-choice button:hover:not(:disabled),
@@ -873,13 +1018,22 @@ button.gw-secondary:hover:not(:disabled),
 
 .gw-type-picks button {
   border-radius: 12px;
-  min-width: 6.2rem;
+  min-width: 7rem;
+  padding: 0.55rem 0.7rem;
   text-align: left;
+  border-color: transparent;
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+.gw-type-picks button:hover:not(:disabled) {
+  filter: brightness(1.06);
   border-color: transparent;
 }
 
 .gw-type-picks button.active {
-  outline: 2px solid var(--ink);
+  outline: 3px solid var(--ink);
   outline-offset: 2px;
 }
 

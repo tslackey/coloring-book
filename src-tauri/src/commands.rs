@@ -495,6 +495,47 @@ pub async fn cache_roster_art(
     Ok(by_name)
 }
 
+#[tauri::command]
+pub async fn replace_roster_art(
+    name: String,
+    url: String,
+    state: State<'_, AppState>,
+) -> Result<ArtView, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Choose a card before replacing its picture".into());
+    }
+    let url = url.trim();
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("Choose a picture from the search results".into());
+    }
+    let client = state.http.clone();
+    let bytes = bulbapedia::download(&client, url).await?;
+    let png = process::card_sprite_png(&bytes, 360)?;
+    let db = state.db.lock().map_err(|_| "Database lock was poisoned")?;
+    db::put_sprite(&db, name, &png, url)?;
+    Ok(ArtView {
+        name: name.to_string(),
+        png_base64: Some(process::to_base64(&png)),
+        error: None,
+    })
+}
+
+#[tauri::command]
+pub fn print_page(window: tauri::WebviewWindow, landscape: bool) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        return crate::print_mac::print_board(&window, landscape);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = landscape;
+        window
+            .print()
+            .map_err(|err| format!("Could not open the print dialog: {err}"))
+    }
+}
+
 fn write_png(path: &str, png: &[u8]) -> Result<(), String> {
     let mut dest = PathBuf::from(path);
     if dest.extension().is_none() {

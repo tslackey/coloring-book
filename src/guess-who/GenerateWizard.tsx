@@ -3,14 +3,13 @@ import { GENERATIONS, generationLabel, typeLabel } from "./catalog";
 import { qualityLabel, scoreRoster } from "./balance";
 import { eligibleCount, generateRoster, generatedName, leanBias, suggestTypes } from "./generate";
 import {
-  TYPE_COLORS,
   TYPE_ORDER,
+  TYPE_PICK_COLORS,
   evenBias,
   freshSeed,
-  type Frame,
   type PokemonType,
   type RosterDefinition,
-  typeInk,
+  typePickInk,
 } from "./roster";
 
 type GenerateWizardProps = {
@@ -25,7 +24,6 @@ export default function GenerateWizard({ onClose, onCreate }: GenerateWizardProp
   const [favored, setFavored] = useState(1);
   const [autoTypes, setAutoTypes] = useState(true);
   const [picked, setPicked] = useState<PokemonType[]>([]);
-  const [frame, setFrame] = useState<Frame>("blue");
   const [seed, setSeed] = useState(() => freshSeed());
 
   const bias = useMemo(() => {
@@ -45,8 +43,8 @@ export default function GenerateWizard({ onClose, onCreate }: GenerateWizardProp
     if (step < 3 || types.length !== 4 || generations.length === 0) {
       return null;
     }
-    return generateRoster({ generations, bias, types, frame, seed });
-  }, [bias, frame, generations, seed, step, types]);
+    return generateRoster({ generations, bias, types, frame: "blue", seed });
+  }, [bias, generations, seed, step, types]);
 
   const report = useMemo(() => (generated ? scoreRoster(generated) : null), [generated]);
 
@@ -185,7 +183,7 @@ export default function GenerateWizard({ onClose, onCreate }: GenerateWizardProp
                     key={type}
                     type="button"
                     className={selected ? "active" : ""}
-                    style={{ background: TYPE_COLORS[type], color: typeInk(type) }}
+                    style={{ background: TYPE_PICK_COLORS[type], color: typePickInk(type) }}
                     onClick={() => toggleType(type)}
                     disabled={count === 0}
                   >
@@ -196,18 +194,6 @@ export default function GenerateWizard({ onClose, onCreate }: GenerateWizardProp
               })}
             </div>
             <p>{autoTypes ? "Four types will be chosen from the deepest pools." : `${picked.length} of 4 selected.`}</p>
-            <div className="mode-toggle" role="group" aria-label="Board frame">
-              {(["blue", "red"] as Frame[]).map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  className={frame === option ? "active" : ""}
-                  onClick={() => setFrame(option)}
-                >
-                  {option === "blue" ? "Blue frame" : "Red frame"}
-                </button>
-              ))}
-            </div>
           </>
         )}
 

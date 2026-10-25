@@ -66,16 +66,53 @@ export const TYPE_COLORS: Record<PokemonType, string> = {
   fairy: "#f0b0d0",
 };
 
-export const FRAME_COLORS: Record<Frame, string> = {
-  blue: "#1d4f9c",
-  red: "#b4332a",
-};
-
 export function typeInk(type: PokemonType): string {
   if (type === "dark" || type === "ghost" || type === "fighting") {
     return "#fffaf2";
   }
   return "#1c1712";
+}
+
+/** Saturated chooser colors. Printed cards keep the softer TYPE_COLORS. */
+export const TYPE_PICK_COLORS: Record<PokemonType, string> = {
+  normal: "#e4d2a4",
+  fire: "#f08030",
+  water: "#2f6fbe",
+  electric: "#f8d030",
+  grass: "#4c9a38",
+  ice: "#9ee7e4",
+  fighting: "#d23a32",
+  poison: "#a33aa3",
+  ground: "#e0b85a",
+  flying: "#6d56d0",
+  psychic: "#ff7aa2",
+  bug: "#c2d04a",
+  rock: "#8c6a2f",
+  ghost: "#6b548c",
+  dragon: "#5b3fd6",
+  dark: "#6b5346",
+  steel: "#b8c0d0",
+  fairy: "#f4b6c8",
+};
+
+function contrastAgainst(hex: string, ink: string): number {
+  const luminance = (color: string) => {
+    const channels = [1, 3, 5].map((start) => {
+      const value = Number.parseInt(color.slice(start, start + 2), 16) / 255;
+      return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+  };
+  const lighter = Math.max(luminance(hex), luminance(ink));
+  const darker = Math.min(luminance(hex), luminance(ink));
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+export function typePickInk(type: PokemonType): string {
+  const hex = TYPE_PICK_COLORS[type];
+  const dark = "#1c1712";
+  const light = "#fffaf2";
+  return contrastAgainst(hex, dark) >= contrastAgainst(hex, light) ? dark : light;
 }
 
 export function evenBias(generations: number[]): Record<number, number> {

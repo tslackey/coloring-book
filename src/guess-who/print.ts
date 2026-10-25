@@ -1,5 +1,5 @@
 import { printDocument } from "../pokemon";
-import { BOARD_CSS, rosterSheetsHtml } from "./board";
+import { BOARD_CSS, copySheetHtml, cropMarksHtml } from "./board";
 import type { RosterDefinition } from "./roster";
 
 function escapeHtml(value: string): string {
@@ -18,15 +18,24 @@ export function printRoster(name: string, definition: RosterDefinition, art: Rec
     <meta charset="utf-8" />
     <title>${title}</title>
     <style>
-      @page { size: letter portrait; margin: 0.45in; }
+      @page { size: letter landscape; margin: 0; }
       html, body { margin: 0; background: #fff; }
       ${BOARD_CSS}
-      .gw-sheet { break-after: page; page-break-after: always; }
-      .gw-sheet:last-child { break-after: auto; page-break-after: auto; }
+      .gw-page {
+        position: relative;
+        width: 11in;
+        height: 8.5in;
+        box-sizing: border-box;
+        padding: 0.5625in 0.6875in;
+        break-after: page;
+        page-break-after: always;
+      }
+      .gw-page:last-child { break-after: auto; page-break-after: auto; }
     </style>
   </head>
   <body>
-    ${rosterSheetsHtml(definition, art)}
+    <section class="gw-page">${cropMarksHtml()}${copySheetHtml(definition, definition.shuffleA, art)}</section>
+    <section class="gw-page">${cropMarksHtml()}${copySheetHtml(definition, definition.shuffleB, art)}</section>
   </body>
 </html>`;
   return printDocument(html);

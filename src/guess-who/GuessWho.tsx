@@ -1,9 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { suggestPokemon } from "../pokemon";
+import type { SearchHit } from "../types";
 import { qualityLabel, scoreRoster, type SwapSuggestion } from "./balance";
 import GenerateWizard from "./GenerateWizard";
-import { BOARD_CSS, copySheetHtml, memberKey } from "./board";
+import {
+  BOARD_CSS,
+  BOARD_HEIGHT_IN,
+  BOARD_WIDTH_IN,
+  LETTER_HEIGHT_IN,
+  LETTER_WIDTH_IN,
+  copySheetHtml,
+  cropMarksHtml,
+  memberKey,
+} from "./board";
 import { BY_NAME, GENERATIONS, generationLabel, typeLabel } from "./catalog";
 import { printRoster } from "./print";
 import {
@@ -18,7 +28,6 @@ import {
   rosterMembers,
   sameBias,
   stoneAndScale,
-  type Frame,
   type PokemonType,
   type RosterDefinition,
   typeInk,
@@ -156,7 +165,260 @@ function SlotSearch({
   );
 }
 
-function ScaledSheet({ html }: { html: string }) {
+function desktopApp(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function cardNameFromClick(event: React.MouseEvent): string | null {
+  const target = event.target;
+  if (!(target instanceof Element) || target.closest(".gw-foot")) {
+    return null;
+  }
+  const name = target.closest(".gw-card")?.getAttribute("data-name")?.trim() ?? "";
+  return name || null;
+}
+
+const ZOOM_STEPS = [0.4, 0.55, 0.7, 0.85, 1, 1.25, 1.5, 2];
+
+function nextZoom(current: number, direction: 1 | -1): number {
+  if (direction > 0) {
+    return ZOOM_STEPS.find((step) => step > current + 0.02) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
+  }
+  const smaller = [...ZOOM_STEPS].reverse().find((step) => step < current - 0.02);
+  return smaller ?? ZOOM_STEPS[0];
+}
+
+function ArtPicker({
+  name,
+  onClose,
+  onSaved,
+}: {
+  name: string;
+  onClose: () => void;
+  onSaved: (name: string, png: string) => void;
+}) {
+  const [query, setQuery] = useState(name);
+  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const field = inputRef.current;
+    field?.focus();
+    field?.select();
+    if (!desktopApp()) {
+      setError("Picture search runs in the desktop app.");
+      return;
+    }
+    let cancel = false;
+    setBusy("Searching Bulbapedia…");
+    invoke<SearchHit[]>("search_bulbapedia", { query: name })
+      .then((results) => {
+        if (cancel) {
+          return;
+        }
+        setHits(results);
+        setError(results.length === 0 ? "No illustrated pages found for that search." : null);
+      })
+      .catch((err: unknown) => {
+        if (!cancel) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      })
+      .finally(() => {
+        if (!cancel) {
+          setBusy(null);
+        }
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [name]);
+
+  const search = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return;
+    }
+    if (!desktopApp()) {
+      setError("Picture search runs in the desktop app.");
+      return;
+    }
+    setBusy("Searching Bulbapedia…");
+    setError(null);
+    try {
+      const results = await invoke<SearchHit[]>("search_bulbapedia", { query: trimmed });
+      setHits(results);
+      if (results.length === 0) {
+        setError("No illustrated pages found for that search.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const choose = async (hit: SearchHit) => {
+    setBusy(`Saving picture for ${name}…`);
+    setError(null);
+    try {
+      const view = await invoke<ArtResult>("replace_roster_art", { name, url: hit.original_url });
+      if (!view.png_base64) {
+        throw new Error(view.error ?? "Could not save that picture.");
+      }
+      onSaved(view.name, view.png_base64);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="gw-wizard-backdrop gw-art-backdrop" onClick={onClose}>
+      <div
+        className="gw-wizard gw-art-picker"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Choose a picture for ${name}`}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="gw-wizard-head">
+          <h2>{name}</h2>
+          <button type="button" className="ghost" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <p>Search Bulbapedia and pick the picture for this Pokémon. It is saved for every roster that uses the same name.</p>
+        <form
+          className="gw-art-search"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void search(query);
+          }}
+        >
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+            aria-label={`Search Bulbapedia for ${name}`}
+            autoComplete="off"
+          />
+          <button type="submit" disabled={!!busy || query.trim().length === 0}>
+            Search
+          </button>
+        </form>
+        {busy && <p className="banner status">{busy}</p>}
+        {error && <p className="banner error">{error}</p>}
+        {hits.length > 0 && (
+          <div className="hit-grid">
+            {hits.map((hit) => (
+              <button
+                key={`${hit.title}-${hit.original_url}`}
+                type="button"
+                className="hit"
+                disabled={!!busy}
+                onClick={() => void choose(hit)}
+              >
+                {hit.thumb_data_url ? <img src={hit.thumb_data_url} alt="" /> : <span className="hit-fallback">No art</span>}
+                <span>{hit.title}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FullscreenPreview({
+  html,
+  copy,
+  onCopy,
+  onClose,
+  onCard,
+}: {
+  html: string;
+  copy: "a" | "b";
+  onCopy: (copy: "a" | "b") => void;
+  onClose: () => void;
+  onCard: (event: React.MouseEvent) => void;
+}) {
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [fit, setFit] = useState(0.5);
+  const [zoom, setZoom] = useState<number | "fit">("fit");
+
+  useEffect(() => {
+    const element = stageRef.current;
+    if (!element) {
+      return;
+    }
+    const update = () => {
+      const style = getComputedStyle(element);
+      const padX = Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight);
+      const padY = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+      const width = element.clientWidth - padX - 8;
+      const height = element.clientHeight - padY - 8;
+      const scale = Math.min(width / (LETTER_WIDTH_IN * 96), height / (LETTER_HEIGHT_IN * 96));
+      setFit(Math.max(0.2, scale));
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  const scale = zoom === "fit" ? fit : zoom;
+
+  return (
+    <div className="gw-zoom" role="dialog" aria-modal="true" aria-label="Board preview">
+      <div className="gw-zoom-bar">
+        <div className="mode-toggle" role="group" aria-label="Which shuffled copy">
+          <button type="button" className={copy === "a" ? "active" : ""} onClick={() => onCopy("a")}>
+            Copy A
+          </button>
+          <button type="button" className={copy === "b" ? "active" : ""} onClick={() => onCopy("b")}>
+            Copy B
+          </button>
+        </div>
+        <div className="gw-zoom-controls" role="group" aria-label="Zoom">
+          <button type="button" onClick={() => setZoom(nextZoom(scale, -1))} aria-label="Zoom out">
+            −
+          </button>
+          <button type="button" className={zoom === "fit" ? "active" : ""} onClick={() => setZoom("fit")}>
+            Fit
+          </button>
+          <button type="button" className={zoom === 1 ? "active" : ""} onClick={() => setZoom(1)}>
+            100%
+          </button>
+          <button type="button" onClick={() => setZoom(nextZoom(scale, 1))} aria-label="Zoom in">
+            +
+          </button>
+          <span>{Math.round(scale * 100)}%</span>
+        </div>
+        <p className="gw-zoom-note">Cut along the corner marks. Click a picture to change it.</p>
+        <button type="button" className="ghost" onClick={onClose}>
+          Close
+        </button>
+      </div>
+      <div className="gw-zoom-stage" ref={stageRef}>
+        <div
+          className="gw-zoom-sizer"
+          style={{ width: `${LETTER_WIDTH_IN * scale}in`, height: `${LETTER_HEIGHT_IN * scale}in` }}
+        >
+          <div className="gw-page gw-zoom-page" style={{ transform: `scale(${scale})` }} onClick={onCard}>
+            <div dangerouslySetInnerHTML={{ __html: cropMarksHtml() }} />
+            <div dangerouslySetInnerHTML={{ __html: html }} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScaledSheet({ html, onCard }: { html: string; onCard: (event: React.MouseEvent) => void }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(0.45);
 
@@ -166,7 +428,7 @@ function ScaledSheet({ html }: { html: string }) {
       return;
     }
     const update = () => {
-      const natural = 7.6 * 96;
+      const natural = BOARD_WIDTH_IN * 96;
       setScale(Math.min(1, element.clientWidth / natural));
     };
     update();
@@ -177,10 +439,11 @@ function ScaledSheet({ html }: { html: string }) {
 
   return (
     <div className="gw-preview" ref={wrapRef}>
-      <div className="gw-preview-clip" style={{ height: `${10.1 * scale}in` }}>
+      <div className="gw-preview-clip" style={{ height: `${BOARD_HEIGHT_IN * scale}in` }}>
         <div
           className="gw-preview-sheet"
           style={{ transform: `scale(${scale})` }}
+          onClick={onCard}
           dangerouslySetInnerHTML={{ __html: html }}
         />
       </div>
@@ -201,6 +464,8 @@ export default function GuessWho() {
   const [artRetry, setArtRetry] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [artName, setArtName] = useState<string | null>(null);
   const artRef = useRef(art);
   const failedRef = useRef(failedArt);
   artRef.current = art;
@@ -524,9 +789,58 @@ export default function GuessWho() {
   const failedNames = rosterMembers(selected.definition).filter((name) => failedArt[name]);
   const half = Math.floor(report.filled / 2);
 
+  useEffect(() => {
+    if (!fullscreen && !artName) {
+      return;
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      if (artName) {
+        setArtName(null);
+      } else {
+        setFullscreen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [artName, fullscreen]);
+
+  const openCardArt = (event: React.MouseEvent) => {
+    const name = cardNameFromClick(event);
+    if (name) {
+      setArtName(name);
+    }
+  };
+
+  const saveCardArt = (name: string, png: string) => {
+    setArt((current) => ({ ...current, [name]: png }));
+    setFailedArt((current) => {
+      if (!current[name]) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[name];
+      return next;
+    });
+  };
+
   return (
     <div className="guess-who">
       <style>{BOARD_CSS}</style>
+      {artName && (
+        <ArtPicker name={artName} onClose={() => setArtName(null)} onSaved={saveCardArt} />
+      )}
+      {fullscreen && (
+        <FullscreenPreview
+          html={previewHtml}
+          copy={copy}
+          onCopy={setCopy}
+          onClose={() => setFullscreen(false)}
+          onCard={openCardArt}
+        />
+      )}
       {wizardOpen && (
         <GenerateWizard
           onClose={() => setWizardOpen(false)}
@@ -575,7 +889,6 @@ export default function GuessWho() {
                     setCopy("a");
                   }}
                 >
-                  <span className={`gw-swatch ${entry.definition.frame}`} />
                   <span>
                     <strong>{entry.name}</strong>
                     <small>
@@ -602,19 +915,6 @@ export default function GuessWho() {
               onChange={(event) => updateSelected((entry) => ({ ...entry, name: event.currentTarget.value }))}
             />
           </label>
-          <div className="mode-toggle" role="group" aria-label="Board frame">
-            {(["blue", "red"] as Frame[]).map((frame) => (
-              <button
-                key={frame}
-                type="button"
-                className={selected.definition.frame === frame ? "active" : ""}
-                disabled={readOnly}
-                onClick={() => patchDefinition({ ...selected.definition, frame })}
-              >
-                {frame === "blue" ? "Blue" : "Red"}
-              </button>
-            ))}
-          </div>
           <div className="gw-actions">
             {readOnly ? (
               <button type="button" onClick={() => void duplicateSelected()} disabled={!!busy}>
@@ -640,10 +940,12 @@ export default function GuessWho() {
             </button>
             <button
               type="button"
-              onClick={() =>
-                void run("Preparing print…", () => printRoster(selected.name, selected.definition, art))
-              }
-              disabled={!!busy}
+              onClick={() => {
+                setError(null);
+                void printRoster(selected.name, selected.definition, art).catch((err: unknown) => {
+                  setError(err instanceof Error ? err.message : String(err));
+                });
+              }}
             >
               Print both copies
             </button>
@@ -887,17 +1189,22 @@ export default function GuessWho() {
           <section className="gw-stage">
             <div className="frame-heading">
               <h3>Print preview</h3>
-              <div className="mode-toggle" role="group" aria-label="Which shuffled copy">
-                <button type="button" className={copy === "a" ? "active" : ""} onClick={() => setCopy("a")}>
-                  Copy A
-                </button>
-                <button type="button" className={copy === "b" ? "active" : ""} onClick={() => setCopy("b")}>
-                  Copy B
+              <div className="gw-stage-tools">
+                <div className="mode-toggle" role="group" aria-label="Which shuffled copy">
+                  <button type="button" className={copy === "a" ? "active" : ""} onClick={() => setCopy("a")}>
+                    Copy A
+                  </button>
+                  <button type="button" className={copy === "b" ? "active" : ""} onClick={() => setCopy("b")}>
+                    Copy B
+                  </button>
+                </div>
+                <button type="button" onClick={() => setFullscreen(true)}>
+                  Full screen
                 </button>
               </div>
             </div>
             <p className="gw-print-note">
-              Each copy is one letter sheet with a 0.45 in margin. The top strip is where you mark the Pokémon your opponent is guessing, and it is shuffled separately from the play grid. Copy A and copy B do not share either arrangement.
+              Each copy prints as a 9 5/8 × 7 3/8 in board, centered on landscape letter paper, with corner marks in the margin showing where to cut. In the print dialog choose landscape, margins none, and scale 100% so the board stays that size. The two rows around the title are where you mark the Pokémon your opponent is guessing, and they are shuffled separately from the flip cards below. Copy A and copy B do not share either arrangement. Click a picture to choose a different one from Bulbapedia.
             </p>
             {artNote && <p className="banner status">{artNote}</p>}
             {!desktopArt && <p>Artwork downloads in the desktop app. Names and colors still preview here.</p>}
@@ -922,7 +1229,7 @@ export default function GuessWho() {
                 </button>
               </p>
             )}
-            <ScaledSheet html={previewHtml} />
+            <ScaledSheet html={previewHtml} onCard={openCardArt} />
           </section>
         </div>
       </div>
